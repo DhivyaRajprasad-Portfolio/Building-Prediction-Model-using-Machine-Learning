@@ -1,0 +1,237 @@
+---
+title: "Building a Prediction Model using ML Techniques- Techniques Used: GLM, Tree, GAM, Neural Networks, SVM, Random Forests, Bagging and Boosting"
+output: 
+     github_document :
+     toc : true
+     toc_depth : 10
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##References             
+
+1. [Introduction to statistical learning](http://www-bcf.usc.edu/~gareth/ISL/)
+2. [Elements of statistical learning](https://statweb.stanford.edu/~tibs/ElemStatLearn/)
+3. [R Bloggers](https://www.r-bloggers.com/)
+
+##Purpose of the Case Study          
+
+Fit predictive models and compare their performance using some error metrics.
+
+We want to compare between different advanced and more flexibile machine learning techniques and compare the interpretation once the complexity increases and bias decreases.
+
+## Packages Used and Data subsetting
+
+The below packages are used for loading data, visualizations, model building and for creating creative plots of the results from each model.
+```{r packages,warning=FALSE, message=FALSE}
+library(MASS) #Boston Housing Data Set
+library(dplyr) #Data Wrangling
+library(tidyverse) #Data Wrangling
+library(knitr) #Knitting RMDs and functionalities
+library(reshape2) #Data Wrangling
+library(ggplot2) #Data Visualization
+library(GGally) #Data Visualization
+library(leaps) #Best Subset selection
+library(boot) #Resampling methods
+library(rpart) #Tree modeling
+library(rattle) #Better Vizzes
+library(mgcv) #GAM modeling
+library(neuralnet) #Neural Networks Model
+library(plyr) #Data Wrangling
+library(caret) #Cross Validation for Neural Networks
+library(e1071) #SVM model
+library(glmnet) #Ridge, Lasso and Elastic Regression
+```
+
+We set up the data using a random seed to sample the data into 75% training and 25% training data. We dont have sufficient data points to have a validation data as well.
+```{r DataSep,warning=FALSE, message=FALSE}
+#Set Seed
+set.seed(10857825)
+#Training and Testing Data
+subset2 = sample(nrow(Boston), nrow(Boston) * 0.75)
+Boston.train2 = Boston[subset2, ]
+Boston.test2 = Boston[-subset2, ]
+```
+
+##Model Performance Indicators            
+
+We will use the following paramters to explain the model performance and the intrinsic differences in the fitting of various models. We can extract all of these results from the fit statement which has a list of stored values for each model.
+**AIC**- Akaike's Information Criterion offers a relative estimate of the infomration lost wen a given model is used to fit the data. It deals with the trade-off between goodness of fit of the model and the complexity of the model. The lower the AIC, better the model.
+**BIC**- Bayesian Information Criterion/ Schwartz Criterion offers a similar trade-off between goodness of fit and complexity of model but penalizes the complexity more than AIC as the number of paramters added to the model increases, typically having BIC values > AIC values. Lower the BIC, Better the model.
+**MSE**- Mean Square Error is the average distance between the observed values and the predicted values. Lower the MSE, more accurate the model.
+
+##GLM and Cross-Validation for GLM          
+
+We find the following parameters from the GLM model:
+AIC: 2325.8
+BIC: 2380.9
+MSE: 25.02- In-Sample
+MSE: 13.22- Out of Sample
+
+If out of sample error is very much lesser than in sample, our model is either very good or we are not predicting the underlying fit properly. So, we need to perform cross-validation to conifrm our error values.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(10857825)
+glmmodel=glm(medv~., data=Boston.train2)
+summary(glmmodel)
+extractAIC(glmmodel)
+extractAIC(glmmodel, k=log(nrow(Boston.train2))) 
+
+#Prediction with training data
+pi1_IS = predict(object = glmmodel, newdata = Boston.train2)
+mean((pi1_IS-Boston.train2$medv)^2)
+
+#Prediction with testing data
+
+pi1_OS = predict(object = glmmodel, newdata = Boston.test2)
+mean((pi1_OS-Boston.test2$medv)^2)
+
+#Residual Plots
+par(mfrow=c(2,2))
+plot(glmmodel)
+
+```
+
+We perform Cross-Validation now to find out the MSE value which is
+MSE- 23.40
+
+which shows that there might be a very high possiblity of an 'unknown fit' influencing the results
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(10857825)
+fullmodel = glm(medv ~ ., data=Boston)
+cvmodel2<-cv.glm(data = Boston, 
+                       glmfit = fullmodel, K = 3)
+cvmodel2$delta[2]
+```
+
+##Regression Trees and Cross-Validation for Regression Trees
+
+We use Regression trees to try and predict the median housing values and compare with our previous model, which has the problem of not knowing the exact underlying fit.
+MSE- In-Sample- 17.04
+MSE- Out-of-Sample- 11.78 which is again good results.
+
+We try to prune the tree to the lowest CP and find the following results.
+MSE- In-Sample- 17.04
+MSE- Out-of-Sample- 11.78 which gives similar values as randomly chosen cp, which shows the chances of overfitting is very less in our original model.
+```{r, warning=FALSE, message=FALSE}
+#Regression Trees
+boston.rpart <- rpart(formula = medv ~ ., data = Boston.train2)
+fancyRpartPlot(boston.rpart)
+boston.train.pred.tree = predict(boston.rpart, Boston.train2)
+mean((boston.train.pred.tree - Boston.train2$medv)^2)
+boston.test.pred.tree = predict(boston.rpart, Boston.test2)
+mean((boston.test.pred.tree - Boston.test2$medv)^2)
+```
+
+We perform pruning of the tree to compare with the previous results to test for overfitting.
+```{r, warning=FALSE, message=FALSE}
+#Pruning rpart cp
+plotcp(boston.rpart)
+printcp(boston.rpart)
+boston.prune = prune(boston.rpart, cp = boston.rpart$cptable[which.min(boston.rpart$cptable[,"xerror"]),"CP"])
+fancyRpartPlot(boston.prune)
+boston.train.pred.tree.prune = predict(boston.prune, Boston.train2)
+mean((boston.train.pred.tree.prune - Boston.train2$medv)^2)
+boston.test.pred.tree.prune = predict(boston.prune, Boston.test2)
+mean((boston.test.pred.tree.prune - Boston.test2$medv)^2)
+```
+
+##GAM- Generalized Additive Model                 
+
+We use Generalized Additive model as a more flexible approach (than rigid GLM) to try and predict the median housing values and compare with our previous models.
+AIC- 2423.30
+BIC-2462.68
+MSE- In-Sample- 33.22
+MSE- Out-of-Sample- 25.40 
+which again indicates the need for better underfitting models.
+
+```{r, warning=FALSE, message=FALSE}
+gam_formula <- as.formula(paste("medv~crim+zn+indus+chas+nox+rm+age+dis+rad+tax+ptratio+black+lstat"))
+gammodel <- gam(formula = gam_formula,family=gaussian ,data = Boston.train2)
+gammodel_summary<-summary(gammodel)
+AIC(gammodel) 
+BIC(gammodel) 
+#In-sample performance
+mean(residuals(gammodel)^2) #In-Sample
+pi1 = predict(object = gammodel, newdata = Boston.test2)
+#Out of Sample performance
+mean((pi1-Boston.test2$medv)^2) #Out of Sample
+```
+
+Cross-Validation                
+We perform Cross-Validation using a 10 fold approach and MSE- 11.74 which is much lesser than the previous results which shows more samples leads to better results and reduction in error
+
+```{r, warning=FALSE, message=FALSE}
+b <- train(medv~crim+zn+indus+chas+nox+rm+age+dis
+           +rad+tax+ptratio+black+lstat, 
+           data = Boston.train2,
+           method = "gam",
+           trControl = trainControl(method = "cv", number = 10),
+           tuneGrid = data.frame(method = "GCV.Cp", select = FALSE)
+)
+mse<-b$results[3]^2
+mse #MSE 15.43
+summary(b$finalModel)
+```
+
+##Neural Networks
+We go for more flexible approaches in Machine Learning now with Neural Networks approach.
+
+```{r, warning=FALSE, message=FALSE}
+#Scaling Inputs- To get a range from 0-1
+maxs <- apply(Boston, 2, max) 
+mins <- apply(Boston, 2, min)
+scaled <- as.data.frame(scale(Boston, center = mins, scale = maxs - mins))
+subset2 = sample(nrow(Boston), nrow(Boston) * 0.75)
+Boston.train2 = scaled[subset2, ]
+Boston.test2 = scaled[-subset2, ]
+n <- names(Boston.train2)
+f <- as.formula(paste("medv ~", paste(n[!n %in% "medv"], collapse = " + ")))
+nnetmodel <- neuralnet(f, data=Boston.train2,hidden=c(5,3), linear.output = TRUE)
+plot(nnetmodel)
+#Out of Sample
+pr.nn<- compute(nnetmodel, Boston.test2[,1:13])
+#Scaling back to get a prediction
+pr.nn_ <- pr.nn$net.result*(max(Boston$medv)-min(Boston$medv))+min(Boston$medv)
+test.r <- (Boston.test2$medv)*(max(Boston$medv)-min(Boston$medv))+min(Boston$medv)
+sum((test.r - pr.nn_)^2)/nrow(Boston.test2)#MSE 13.613
+plot(Boston.test2$medv,pr.nn_,col='red',main='Real vs predicted NN',pch=18,cex=0.7)
+legend('bottomright',legend='NN',pch=18,col='red', bty='n')
+#Cross-Validation
+cv.error <- NULL
+k <- 10
+pbar <- create_progress_bar('text')
+pbar$init(k)
+for(i in 1:k){
+  index <- sample(1:nrow(Boston),round(0.9*nrow(Boston)))
+  train.cv <- scaled[index,]
+  test.cv <- scaled[-index,]
+  
+  nn <- neuralnet(f,data=train.cv,hidden=c(5,2),linear.output=T)
+  
+  pr.nn <- compute(nn,test.cv[,1:13])
+  pr.nn <- pr.nn$net.result*(max(Boston$medv)-min(Boston$medv))+min(Boston$medv)
+  
+  test.cv.r <- (test.cv$medv)*(max(Boston$medv)-min(Boston$medv))+min(Boston$medv)
+  
+  cv.error[i] <- sum((test.cv.r - pr.nn)^2)/nrow(test.cv)
+  
+  pbar$step()
+}
+mean(cv.error) #MSE- 11.10
+```
+
+##Support Vector Machines
+```{r, warning=FALSE, message=FALSE}
+svmmodel<-svm(medv~., Boston.train2)
+mean(residuals(svmmodel)^2)#Insample 11.06
+
+
+predsvm<- predict(svmmodel, Boston.test2)
+mean((predsvm-Boston.test2$medv)^2)#Out of Sample 7.47
+
+
+```
+
